@@ -82,7 +82,7 @@ class AnalysisSummary(BaseModel):
     summarized_analysis: str = Field(..., alias="요약분석")
     key_signals: list[str] = Field(..., alias="핵심신호")
 
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(extra="forbid", populate_by_name=True, serialize_by_alias=True)
 
 
 class RecommendationItem(BaseModel):
@@ -94,9 +94,10 @@ class RecommendationItem(BaseModel):
     support_content: list[str] = Field(..., alias="지원내용")
     application_steps: list[str] = Field(..., alias="신청절차")
     required_documents: list[str] = Field(..., alias="필요서류")
+    link: str = Field(default="", alias="링크")
     contact: str = Field(..., alias="문의")
 
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(extra="forbid", populate_by_name=True, serialize_by_alias=True)
 
 
 class AnalyzeStudentResponse(BaseModel):
@@ -106,7 +107,7 @@ class AnalyzeStudentResponse(BaseModel):
         alias="ai_추천기관_제도",
     )
 
-    model_config = ConfigDict(extra="forbid", populate_by_name=True)
+    model_config = ConfigDict(extra="forbid", populate_by_name=True, serialize_by_alias=True)
 
 
 class GeminiAnalysisResult(BaseModel):
@@ -114,4 +115,4 @@ class GeminiAnalysisResult(BaseModel):
     analysis: str = Field(..., alias="분석내용")
     key_signals: list[str] = Field(..., alias="핵심신호")
 
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(extra="forbid", populate_by_name=True, serialize_by_alias=True)

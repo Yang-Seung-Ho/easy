@@ -5,8 +5,11 @@ class Settings(BaseSettings):
     app_name: str = "Student Support Recommendation API"
     app_env: str = "local"
     gemini_api_key: str = ""
-    gemini_model: str = "gemini-1.5-flash"
+    gemini_model: str = "gemini-2.0-flash-lite"
     gemini_embedding_model: str = "models/gemini-embedding-001"
+    gemini_max_retries: int = 0
+    allow_local_fallback: bool = True
+    use_gemini_embeddings: bool = False
     institutions_csv_path: str = "sample_institutions.csv"
 
     model_config = SettingsConfigDict(

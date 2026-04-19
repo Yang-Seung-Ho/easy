@@ -1,4 +1,5 @@
 from fastapi import FastAPI, HTTPException
+import re
 
 from app.config import settings
 from app.gemini_analyzer import analyze_student_data
@@ -15,15 +16,61 @@ def health_check() -> dict[str, str]:
 
 
 def _split_to_list(text: str) -> list[str]:
-    normalized = (
-        text.replace(" 및 ", "|")
-        .replace(" 후 ", "|")
-        .replace("+", "|")
-        .replace(",", "|")
-        .replace("/", "|")
-    )
-    items = [part.strip() for part in normalized.split("|") if part.strip()]
+    normalized = text.replace(" 및 ", "|")
+    # Keep semantic phrases intact (e.g. "방과 후"), split only by clear separators.
+    items = [
+        part.strip()
+        for part in re.split(r"\s*(?:\||,|/|\+|;)\s*", normalized)
+        if part.strip()
+    ]
     return items if items else [text.strip()]
+
+
+def _build_rag_context(
+    request: AnalyzeStudentRequest,
+    analysis_summary: str,
+    key_signals: list[str],
+) -> dict[str, object]:
+    info = request.all_data.integrated_application_info
+    personal = info.student_personal_info
+    home = info.home_environment_and_eligibility
+    difficulties = info.student_condition.student_difficulties
+
+    observation_texts = [
+        f"{log.content} {log.special_notes}".strip()
+        for log in request.all_data.observation_logs
+    ]
+
+    full_text_parts = [
+        analysis_summary,
+        " ".join(key_signals),
+        info.support_request,
+        info.application_reason,
+        info.student_condition.student_status,
+        difficulties.academics,
+        difficulties.emotional_psychological,
+        difficulties.care_safety_health,
+        difficulties.economy_life,
+        difficulties.etc,
+        home.student_basic_info,
+        home.basic_living_security_status,
+        home.family_status,
+        " ".join(observation_texts),
+    ]
+
+    return {
+        "student_grade": personal.grade,
+        "student_text": " ".join(part for part in full_text_parts if part).strip(),
+        "support_request": info.support_request,
+        "application_reason": info.application_reason,
+        "student_status": info.student_condition.student_status,
+        "observation_text": " ".join(observation_texts).strip(),
+        "basic_living_security_status": home.basic_living_security_status,
+        "student_basic_info": home.student_basic_info,
+        "family_status": home.family_status,
+        "economy_life": difficulties.economy_life,
+        "key_signals": key_signals,
+    }
 
 
 @app.post("/api/analyze-student", response_model=AnalyzeStudentResponse)
@@ -43,10 +90,36 @@ def analyze_student(request: AnalyzeStudentRequest) -> AnalyzeStudentResponse:
             detail="Gemini returned empty 핵심신호. Cannot run RAG search.",
         )
 
-    rag_query = ", ".join(key_signals)
+    info = request.all_data.integrated_application_info
+    rag_query = " | ".join(
+        [
+            ", ".join(key_signals),
+            analysis.analysis,
+            info.support_request,
+            info.application_reason,
+            info.student_condition.student_difficulties.academics,
+            info.student_condition.student_difficulties.emotional_psychological,
+            info.student_condition.student_difficulties.care_safety_health,
+            info.student_condition.student_difficulties.economy_life,
+            info.student_condition.student_difficulties.etc,
+            " | ".join(
+                f"{log.content} {log.special_notes}".strip()
+                for log in request.all_data.observation_logs
+            ),
+        ]
+    )
+    rag_context = _build_rag_context(
+        request=request,
+        analysis_summary=analysis.analysis,
+        key_signals=key_signals,
+    )
 
     try:
-        rag_results = search_relevant_institutions(query=rag_query, top_k=3)
+        rag_results = search_relevant_institutions(
+            query=rag_query,
+            top_k=3,
+            context=rag_context,
+        )
     except Exception as error:
         raise HTTPException(
             status_code=500,
@@ -55,7 +128,7 @@ def analyze_student(request: AnalyzeStudentRequest) -> AnalyzeStudentResponse:
 
     recommendations: list[RecommendationItem] = []
     for item in rag_results:
-        score_percent = round(max(0.0, min(1.0, item["relevance_score"])) * 100)
+        score_percent = round(max(0.0, min(1.0, float(item["relevance_score"]))) * 100)
         support_list = _split_to_list(item["지원내용"])
         process_list = _split_to_list(item["신청절차"])
         docs_list = _split_to_list(item["필요서류"])
@@ -67,12 +140,13 @@ def analyze_student(request: AnalyzeStudentRequest) -> AnalyzeStudentResponse:
             RecommendationItem(
                 구분=item["유형"],
                 기관명=item["이름"],
-                적합도=f"{score_percent}%",
+                적합도=str(score_percent),
                 기관설명=institution_description,
                 대상=item["지원대상"],
                 지원내용=support_list,
                 신청절차=process_list,
                 필요서류=docs_list,
+                링크=item.get("링크", "").strip(),
                 문의=item["문의처"],
             )
         )
