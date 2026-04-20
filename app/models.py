@@ -86,18 +86,23 @@ class AnalysisSummary(BaseModel):
 
 
 class RecommendationItem(BaseModel):
-    category: str = Field(..., alias="구분")
-    institution_name: str = Field(..., alias="기관명")
-    fitness: str = Field(..., alias="적합도")
-    institution_description: str = Field(..., alias="기관설명")
-    target: str = Field(..., alias="대상")
-    support_content: list[str] = Field(..., alias="지원내용")
-    application_steps: list[str] = Field(..., alias="신청절차")
-    required_documents: list[str] = Field(..., alias="필요서류")
-    link: str = Field(default="", alias="링크")
-    contact: str = Field(..., alias="문의")
+    category: str
+    suitability: int          # relevance_score * 100 반올림값 (0~100)
+    welfareType: str
+    servId: str
+    servNm: str
+    agency: str
+    department: str
+    intrsThemaArray: list[str]
+    lifeArray: list[str]
+    srvPvsnNm: str
+    sprtCycNm: str
+    servDgst: str
+    servDtlLink: str
+    inqNum: int
+    contact: str | None
 
-    model_config = ConfigDict(extra="forbid", populate_by_name=True, serialize_by_alias=True)
+    model_config = ConfigDict(extra="forbid")
 
 
 class AnalyzeStudentResponse(BaseModel):

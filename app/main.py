@@ -1,8 +1,9 @@
 from fastapi import FastAPI, HTTPException
 import re
+import ast
 
 from app.config import settings
-from app.gemini_analyzer import analyze_student_data
+from app.gemini_analyzer import analyze_student_data, analyze_observation_domains
 from app.models import AnalysisSummary, AnalyzeStudentRequest, AnalyzeStudentResponse
 from app.models import RecommendationItem
 from app.rag import search_relevant_institutions
@@ -15,15 +16,17 @@ def health_check() -> dict[str, str]:
     return {"status": "ok", "env": settings.app_env}
 
 
-def _split_to_list(text: str) -> list[str]:
-    normalized = text.replace(" 및 ", "|")
-    # Keep semantic phrases intact (e.g. "방과 후"), split only by clear separators.
-    items = [
-        part.strip()
-        for part in re.split(r"\s*(?:\||,|/|\+|;)\s*", normalized)
-        if part.strip()
-    ]
-    return items if items else [text.strip()]
+def _parse_array_field(value: str) -> list[str]:
+    """'항목1, 항목2' 또는 '["항목1", "항목2"]' 형태 모두 처리"""
+    if not value:
+        return []
+    try:
+        parsed = ast.literal_eval(value)
+        if isinstance(parsed, list):
+            return [str(i).strip() for i in parsed]
+    except Exception:
+        pass
+    return [v.strip() for v in value.split(",") if v.strip()]
 
 
 def _build_rag_context(
@@ -77,6 +80,16 @@ def _build_rag_context(
 def analyze_student(request: AnalyzeStudentRequest) -> AnalyzeStudentResponse:
     try:
         analysis = analyze_student_data(request)
+        student_context = (
+            f"학년: {request.all_data.integrated_application_info.student_personal_info.grade}\n"
+            f"지원요청: {request.all_data.integrated_application_info.support_request}\n"
+            f"핵심신호: {', '.join(analysis.key_signals)}"
+        )
+        domain_scores = analyze_observation_domains(
+            observation_logs=request.all_data.observation_logs,
+            student_context=student_context,
+        )
+
     except Exception as error:
         raise HTTPException(
             status_code=502,
@@ -119,6 +132,8 @@ def analyze_student(request: AnalyzeStudentRequest) -> AnalyzeStudentResponse:
             query=rag_query,
             top_k=3,
             context=rag_context,
+            domain_scores=domain_scores,   # ← 추가
+
         )
     except Exception as error:
         raise HTTPException(
@@ -128,26 +143,24 @@ def analyze_student(request: AnalyzeStudentRequest) -> AnalyzeStudentResponse:
 
     recommendations: list[RecommendationItem] = []
     for item in rag_results:
-        score_percent = round(max(0.0, min(1.0, float(item["relevance_score"]))) * 100)
-        support_list = _split_to_list(item["지원내용"])
-        process_list = _split_to_list(item["신청절차"])
-        docs_list = _split_to_list(item["필요서류"])
-        institution_description = (
-            "지역 기관 안내 데이터 기반으로 학생 특성과 연관성이 높은 "
-            f"{item['유형']} 연계 정보"
-        )
+        suitability = round(max(0.0, min(1.0, float(item.get("relevance_score", 0)))) * 100)
         recommendations.append(
             RecommendationItem(
-                구분=item["유형"],
-                기관명=item["이름"],
-                적합도=str(score_percent),
-                기관설명=institution_description,
-                대상=item["지원대상"],
-                지원내용=support_list,
-                신청절차=process_list,
-                필요서류=docs_list,
-                링크=item.get("링크", "").strip(),
-                문의=item["문의처"],
+                category=item.get("category", ""),
+                suitability=suitability,
+                welfareType=item.get("welfareType", ""),
+                servId=item.get("servId", ""),
+                servNm=item.get("servNm", ""),
+                agency=item.get("agency", ""),
+                department=item.get("department", ""),
+                intrsThemaArray=_parse_array_field(item.get("intrsThemaArray", "")),
+                lifeArray=_parse_array_field(item.get("lifeArray", "")),
+                srvPvsnNm=item.get("srvPvsnNm", ""),
+                sprtCycNm=item.get("sprtCycNm", ""),
+                servDgst=item.get("servDgst", ""),
+                servDtlLink=item.get("servDtlLink", ""),
+                inqNum=int(item.get("inqNum", 0) or 0),
+                contact=item.get("contact") or None,
             )
         )
 

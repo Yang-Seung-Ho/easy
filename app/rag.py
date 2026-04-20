@@ -6,15 +6,20 @@ from typing import Any
 
 from app.config import settings
 
-REQUIRED_COLUMNS = ["유형", "이름", "지원대상", "지원내용", "신청절차", "필요서류", "문의처"]
-OPTIONAL_COLUMNS = ["링크"]
+# 변경 후
+REQUIRED_COLUMNS = [
+    "category", "welfareType", "servId", "servNm", "agency", "department",
+    "intrsThemaArray", "lifeArray", "srvPvsnNm", "sprtCycNm",
+    "servDgst", "servDtlLink", "inqNum", "contact",
+]
+OPTIONAL_COLUMNS: list[str] = []
 FIELD_WEIGHTS: dict[str, float] = {
-    "이름": 2.4,
-    "지원대상": 2.0,
-    "지원내용": 2.2,
-    "신청절차": 1.0,
-    "필요서류": 0.8,
-    "유형": 0.6,
+    "servNm":          2.4,   # 구 "이름"
+    "lifeArray":       2.0,   # 구 "지원대상"
+    "servDgst":        2.2,   # 구 "지원내용"
+    "srvPvsnNm":       1.0,   # 구 "신청절차"
+    "intrsThemaArray": 0.8,   # 구 "필요서류"
+    "category":        0.6,   # 구 "유형"
 }
 KOREAN_STOPWORDS = {
     "학생",
@@ -176,14 +181,14 @@ def _load_institution_documents(csv_path: str | Path) -> list[Any]:
             for column in OPTIONAL_COLUMNS:
                 metadata[column] = row.get(column, "").strip()
             page_content = (
-                f"유형: {metadata['유형']}\n"
-                f"이름: {metadata['이름']}\n"
-                f"지원대상: {metadata['지원대상']}\n"
-                f"지원내용: {metadata['지원내용']}\n"
-                f"신청절차: {metadata['신청절차']}\n"
-                f"필요서류: {metadata['필요서류']}\n"
-                f"문의처: {metadata['문의처']}\n"
-                f"링크: {metadata['링크']}"
+                f"category: {metadata['category']}\n"
+                f"servNm: {metadata['servNm']}\n"
+                f"lifeArray: {metadata['lifeArray']}\n"
+                f"servDgst: {metadata['servDgst']}\n"
+                f"intrsThemaArray: {metadata['intrsThemaArray']}\n"
+                f"srvPvsnNm: {metadata['srvPvsnNm']}\n"
+                f"contact: {metadata['contact']}\n"
+                f"servDtlLink: {metadata['servDtlLink']}"
             )
             documents.append({"page_content": page_content, "metadata": metadata})
 
@@ -277,13 +282,14 @@ def _domain_profile_scores(text: str) -> dict[str, float]:
 def _score_context_alignment(
     metadata: dict[str, str],
     context: dict[str, Any] | None,
+    domain_scores: dict[str, float] | None = None,   # ← 추가
+
 ) -> float:
     if not context:
         return 0.0
 
     doc_text = " ".join(
-        metadata.get(field, "")
-        for field in REQUIRED_COLUMNS + OPTIONAL_COLUMNS
+        metadata.get(field, "") for field in REQUIRED_COLUMNS
     ).lower()
     student_text = str(context.get("student_text", "")).lower()
     support_request = str(context.get("support_request", "")).lower()
@@ -322,7 +328,7 @@ def _score_context_alignment(
         overlap = sum(1 for term in reason_terms if term in doc_text) / len(reason_terms)
         score += overlap * 0.10
 
-    doc_name = metadata.get("이름", "").strip().lower()
+    doc_name = metadata.get("servNm", "").strip().lower()
     for target_name, trigger_keywords in DIRECT_NAME_BOOST_PATTERNS.items():
         if doc_name != target_name:
             continue
@@ -363,7 +369,28 @@ def _score_context_alignment(
         {"돌봄", "방과 후", "방과후", "지역아동센터"},
     ):
         score += 0.06
+    if domain_scores:
+            DOMAIN_TO_DOC_KEYWORDS = {
+                "학업":     {"교육", "학습", "기초학력", "학비", "교육비", "학교"},
+                "정서_심리": {"상담", "정서", "심리", "심리상담", "위클래스", "청소년특별지원"},
+                "사회성":   {"또래", "관계", "사회성", "집단상담", "청소년"},
+                "돌봄":     {"돌봄", "방과후", "아이돌봄", "지역아동센터", "보호"},
+                "경제":     {"교육비", "바우처", "지원금", "급여", "저소득", "서민금융"},
+                "위기":     {"위기", "긴급복지", "폭력", "가출", "보호시설"},
+                "장애_특수": {"장애", "특수교육", "발달장애", "치료지원"},
+            }
 
+            dynamic_score = 0.0
+            for domain, urgency in domain_scores.items():
+                if domain == "분석근거" or not isinstance(urgency, float):
+                    continue
+                if urgency < 0.3:   # 긴급도 낮으면 무시
+                    continue
+                keywords = DOMAIN_TO_DOC_KEYWORDS.get(domain, set())
+                if _contains_any(doc_text, keywords):
+                    dynamic_score += urgency * 0.15   # 긴급도 * 가중치
+
+            score += min(0.45, dynamic_score)   # 최대 +0.45 보너스
     return max(-0.6, min(0.6, score))
 
 
@@ -373,6 +400,7 @@ def _rank_documents(
     top_k: int,
     context: dict[str, Any] | None = None,
     vector_scores: dict[str, float] | None = None,
+    domain_scores: dict[str, float] | None = None, # 인자 추가
 ) -> list[dict[str, Any]]:
     query_terms = _tokenize_query(query)
     vector_scores = vector_scores or {}
@@ -383,8 +411,8 @@ def _rank_documents(
         weighted_score = _weighted_row_match_score(query_terms, metadata)
         text_score = _score_text_match(query_terms, doc["page_content"])
         lexical_score = (weighted_score * 0.55) + (text_score * 0.15)
-        context_score = _score_context_alignment(metadata, context)
-        vector_score = vector_scores.get(metadata.get("이름", ""), 0.0) * 0.20
+        context_score = _score_context_alignment(metadata, context, domain_scores=domain_scores)
+        vector_score = vector_scores.get(metadata.get("servNm", ""), 0.0) * 0.20
         score = max(0.0, min(1.0, lexical_score + context_score + vector_score))
         scored_docs.append(
             {
@@ -422,7 +450,7 @@ def _weighted_row_match_score(query_terms: list[str], metadata: dict[str, str]) 
 
     # Add small boosts for highly indicative terms in target/content.
     target_plus_content = (
-        f"{metadata.get('지원대상', '')} {metadata.get('지원내용', '')}".lower()
+        f"{metadata.get('lifeArray', '')} {metadata.get('servDgst', '')}".lower()
     )
     bonus_terms = {
         "정서",
@@ -448,12 +476,14 @@ def _fallback_similarity_search(
     query: str,
     top_k: int,
     context: dict[str, Any] | None = None,
+    domain_scores: dict[str, float] | None = None,  # 인자 추가
 ) -> list[dict[str, Any]]:
     return _rank_documents(
         documents=documents,
         query=query,
         top_k=top_k,
         context=context,
+        domain_scores=domain_scores,  # _rank_documents로 전달
     )
 
 
@@ -462,6 +492,7 @@ def search_relevant_institutions(
     top_k: int = 3,
     csv_path: str | Path | None = None,
     context: dict[str, Any] | None = None,
+    domain_scores: dict[str, float] | None = None,   # ← 추가
 ) -> list[dict[str, Any]]:
     """
     Search relevant institution/policy rows from CSV using
@@ -479,6 +510,8 @@ def search_relevant_institutions(
             query=query,
             top_k=top_k,
             context=context,
+            domain_scores=domain_scores,   # ← 전달
+
         )
 
     try:
@@ -488,7 +521,7 @@ def search_relevant_institutions(
         for doc, distance in results:
             # FAISS distance is lower-is-better. Convert to easy-to-read score as well.
             relevance_score = 1 / (1 + float(distance))
-            name = str(doc.metadata.get("이름", "")).strip()
+            name = str(doc.metadata.get("servNm", "")).strip()
             if not name:
                 continue
             vector_scores[name] = max(vector_scores.get(name, 0.0), relevance_score)

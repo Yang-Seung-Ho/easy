@@ -21,6 +21,13 @@ SYSTEM_INSTRUCTION = (
     "반드시 JSON만 반환하고, 설명 문장은 쓰지 마."
 )
 
+DOMAIN_ANALYSIS_INSTRUCTION = (
+    "너는 학생 복지 전문가야. "
+    "교사 관찰일지를 읽고 학생에게 어떤 영역의 지원이 얼마나 긴급하게 필요한지 "
+    "0.0~1.0 사이 점수로 평가해. "
+    "반드시 JSON만 반환하고 설명은 쓰지 마."
+)
+
 
 def _is_rate_limit_error(error: Exception) -> bool:
     message = str(error).lower()
@@ -33,7 +40,6 @@ def _is_rate_limit_error(error: Exception) -> bool:
 
 
 def _extract_keywords(text: str, limit: int = 3) -> list[str]:
-    # Keep simple token extraction for deterministic fallback output.
     tokens = re.findall(r"[가-힣A-Za-z0-9]{2,}", text)
     seen: set[str] = set()
     result: list[str] = []
@@ -52,12 +58,10 @@ def _extract_json_object(raw_text: str) -> dict:
     if not cleaned:
         raise ValueError("Empty response from Gemini.")
 
-    # Prefer fenced JSON body if present.
     fenced_match = re.search(r"```(?:json)?\s*(\{.*?\})\s*```", cleaned, re.DOTALL)
     if fenced_match:
         return json.loads(fenced_match.group(1))
 
-    # Fallback: find first JSON object-like block.
     start = cleaned.find("{")
     end = cleaned.rfind("}")
     if start >= 0 and end > start:
@@ -215,6 +219,81 @@ def _build_compact_student_context(request_data: AnalyzeStudentRequest) -> str:
         f"학생어려움(돌봄안전건강): {difficulties.care_safety_health}\n"
         f"관찰일지:\n" + "\n".join(observation_lines)
     )
+
+
+def _default_domain_scores() -> dict[str, float]:
+    """Gemini 호출 실패 시 사용하는 기본 도메인 점수."""
+    return {
+        "학업": 0.5,
+        "정서_심리": 0.5,
+        "사회성": 0.3,
+        "돌봄": 0.3,
+        "경제": 0.1,
+        "위기": 0.0,
+        "장애_특수": 0.0,
+        "분석근거": "",
+    }
+
+
+def analyze_observation_domains(
+    observation_logs: list,
+    student_context: str = "",
+) -> dict[str, float]:
+    """
+    관찰일지를 Gemini로 분석하여 도메인별 긴급도 점수(0.0~1.0)를 반환한다.
+    Gemini 호출 실패 시 기본값을 반환하여 서비스 중단을 방지한다.
+    """
+    if not settings.gemini_api_key:
+        return _default_domain_scores()
+
+    log_text = "\n".join(
+        f"[{log.date} {log.place}] {log.content} / 특이사항: {log.special_notes}"
+        for log in observation_logs[:5]
+    )
+
+    prompt = (
+        f"{DOMAIN_ANALYSIS_INSTRUCTION}\n\n"
+        "관찰일지:\n"
+        f"{log_text}\n\n"
+        "학생 기본 맥락:\n"
+        f"{student_context}\n\n"
+        "아래 스키마로 반환해:\n"
+        "{\n"
+        '  "학업": 0.0,          // 학습부진, 기초학력, 집중력\n'
+        '  "정서_심리": 0.0,     // 불안, 무기력, 자존감, 분노\n'
+        '  "사회성": 0.0,        // 또래갈등, 충동, 관계 어려움\n'
+        '  "돌봄": 0.0,          // 방과후 공백, 혼자 있는 시간\n'
+        '  "경제": 0.0,          // 경제적 어려움, 교육비\n'
+        '  "위기": 0.0,          // 자해, 학대, 가출, 고위험\n'
+        '  "장애_특수": 0.0,     // 발달장애, 특수교육 필요\n'
+        '  "분석근거": ""        // 왜 이렇게 판단했는지 한 문장\n'
+        "}"
+    )
+
+    try:
+        response_body = _gemini_generate_content(
+            prompt=prompt,
+            model_name=settings.gemini_model,
+            api_key=settings.gemini_api_key,
+        )
+        raw_text = _extract_text_from_gemini_response(response_body)
+        parsed = _extract_json_object(raw_text)
+
+        domain_keys = ["학업", "정서_심리", "사회성", "돌봄", "경제", "위기", "장애_특수"]
+        scores: dict[str, float] = {}
+        for key in domain_keys:
+            val = parsed.get(key, 0.0)
+            try:
+                scores[key] = max(0.0, min(1.0, float(val)))
+            except (TypeError, ValueError):
+                scores[key] = 0.0
+
+        scores["분석근거"] = str(parsed.get("분석근거", ""))
+        return scores
+
+    except Exception:
+        # Gemini 실패해도 서비스 중단 없이 기본값으로 계속
+        return _default_domain_scores()
 
 
 def analyze_student_data(request_data: AnalyzeStudentRequest) -> GeminiAnalysisResult:

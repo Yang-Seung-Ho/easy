@@ -10,7 +10,8 @@ class Settings(BaseSettings):
     gemini_max_retries: int = 0
     allow_local_fallback: bool = True
     use_gemini_embeddings: bool = False
-    institutions_csv_path: str = "sample_institutions.csv"
+    institutions_csv_path: str = "welfare_integrated_data.csv"
+
 
     model_config = SettingsConfigDict(
         env_file=".env",
