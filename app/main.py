@@ -45,6 +45,7 @@ def _build_rag_context(
     ]
 
     full_text_parts = [
+        personal.region,
         analysis_summary,
         " ".join(key_signals),
         info.support_request,
@@ -63,6 +64,7 @@ def _build_rag_context(
 
     return {
         "student_grade": personal.grade,
+        "student_region": personal.region,
         "student_text": " ".join(part for part in full_text_parts if part).strip(),
         "support_request": info.support_request,
         "application_reason": info.application_reason,
@@ -82,6 +84,7 @@ def analyze_student(request: AnalyzeStudentRequest) -> AnalyzeStudentResponse:
         analysis = analyze_student_data(request)
         student_context = (
             f"학년: {request.all_data.integrated_application_info.student_personal_info.grade}\n"
+            f"지역: {request.all_data.integrated_application_info.student_personal_info.region}\n"
             f"지원요청: {request.all_data.integrated_application_info.support_request}\n"
             f"핵심신호: {', '.join(analysis.key_signals)}"
         )
@@ -107,6 +110,7 @@ def analyze_student(request: AnalyzeStudentRequest) -> AnalyzeStudentResponse:
     rag_query = " | ".join(
         [
             ", ".join(key_signals),
+            info.student_personal_info.region,
             analysis.analysis,
             info.support_request,
             info.application_reason,
@@ -130,7 +134,7 @@ def analyze_student(request: AnalyzeStudentRequest) -> AnalyzeStudentResponse:
     try:
         rag_results = search_relevant_institutions(
             query=rag_query,
-            top_k=3,
+            top_k=100,
             context=rag_context,
             domain_scores=domain_scores,   # ← 추가
 

@@ -3,6 +3,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 class StudentPersonalInfo(BaseModel):
     student_name: str = Field(..., alias="학생이름")
+    region: str = Field("", alias="지역")
     grade: int = Field(..., alias="학년")
     class_number: int = Field(..., alias="반")
     birth_date: str = Field(..., alias="생년월일")
