@@ -239,6 +239,10 @@ DEFAULT_MULTI_CSV_PATHS = [
 MIN_RECOMMENDATION_SCORE = 0.12
 
 
+def _project_root() -> Path:
+    return Path(__file__).resolve().parent.parent
+
+
 def _validate_csv_headers(fieldnames: list[str] | None, csv_path: Path) -> None:
     if not fieldnames:
         raise ValueError(f"CSV header is missing: {csv_path}")
@@ -266,7 +270,12 @@ def _resolve_csv_paths(csv_path: str | Path | list[str] | list[Path] | None) -> 
     else:
         path_candidates = [part.strip() for part in str(raw_paths).split(",") if part.strip()]
 
-    paths = [Path(part) for part in dict.fromkeys(path_candidates)]
+    paths: list[Path] = []
+    for part in dict.fromkeys(path_candidates):
+        path = Path(part)
+        if not path.is_absolute():
+            path = _project_root() / path
+        paths.append(path)
     if not paths:
         raise ValueError("No CSV paths configured for institution search.")
     return paths

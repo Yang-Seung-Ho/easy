@@ -1,14 +1,15 @@
 {
-  "builds": [
-    {
-      "src": "app/main.py",
-      "use": "@vercel/python"
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "functions": {
+    "app/index.py": {
+      "runtime": "@vercel/python",
+      "includeFiles": "{app/**,integrated_institution_data.csv,transformed_scholarships_detailed_dgst.csv,welfare_integrated_data.csv}"
     }
-  ],
-  "routes": [
+  },
+  "rewrites": [
     {
-      "src": "/(.*)",
-      "dest": "app/main.py"
+      "source": "/(.*)",
+      "destination": "/app/index.py"
     }
   ]
 }

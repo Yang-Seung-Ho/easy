@@ -23,7 +23,13 @@ app.add_middleware(
 
 @app.get("/health")
 def health_check() -> dict[str, str]:
-    return {"status": "ok", "env": settings.app_env}
+    return {
+        "status": "ok",
+        "env": settings.app_env,
+        "schema_version": "2026-04-25-region-enabled",
+        "supports_region_field": "true",
+        "vercel_git_commit_sha": os.getenv("VERCEL_GIT_COMMIT_SHA", ""),
+    }
 
 
 def _parse_array_field(value: str) -> list[str]:
