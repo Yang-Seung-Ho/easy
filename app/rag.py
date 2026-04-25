@@ -756,14 +756,27 @@ def search_relevant_institutions(
     if not query.strip():
         raise ValueError("Query text is empty.")
 
-    documents = _load_institution_documents(csv_path)
+    # ---------------- Vercel 환경 경로 수정 시작 ----------------
+    target_csv_path = str(csv_path or settings.institutions_csv_path)
+    
+    # 경로가 절대 경로가 아니라면, 프로젝트 최상위 폴더(EASY) 기준으로 찾도록 설정
+    if not os.path.isabs(target_csv_path):
+        # app/rag.py 기준 2단계 위(EASY 폴더)를 찾습니다.
+        base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        target_csv_path = os.path.join(base_dir, target_csv_path)
+    # ---------------- Vercel 환경 경로 수정 끝 ----------------
+
+    # 수정된 경로를 기반으로 문서 로드
+    documents = _load_institution_documents(target_csv_path)
+    
+    # 임베딩 방식에 따른 분기 처리 (새로 추가된 부분)
     if not settings.use_gemini_embeddings:
         return _fallback_similarity_search(
             documents,
             query=query,
             top_k=top_k,
             context=context,
-            domain_scores=domain_scores,
+            domain_scores=domain_scores,   # ← 전달
         )
 
     try:
@@ -786,7 +799,6 @@ def search_relevant_institutions(
             top_k=top_k,
             context=context,
             vector_scores=vector_scores,
-            domain_scores=domain_scores,
         )
     except Exception:
         return _fallback_similarity_search(
@@ -794,5 +806,4 @@ def search_relevant_institutions(
             query=query,
             top_k=top_k,
             context=context,
-            domain_scores=domain_scores,
         )

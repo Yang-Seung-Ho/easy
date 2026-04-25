@@ -1,6 +1,8 @@
 from fastapi import FastAPI, HTTPException
+from fastapi.middleware.cors import CORSMiddleware  # Vercel 배포 필수 추가
 import re
 import ast
+import os
 
 from app.config import settings
 from app.gemini_analyzer import analyze_student_data, analyze_observation_domains
@@ -10,6 +12,14 @@ from app.rag import search_relevant_institutions
 
 app = FastAPI(title=settings.app_name)
 
+# --- CORS 설정 (프론트엔드 연결을 위해 필수) ---
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],  # 모든 도메인 허용 (나중에 프론트엔드 주소로 한정하면 더 안전함)
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 @app.get("/health")
 def health_check() -> dict[str, str]:
@@ -136,8 +146,7 @@ def analyze_student(request: AnalyzeStudentRequest) -> AnalyzeStudentResponse:
             query=rag_query,
             top_k=100,
             context=rag_context,
-            domain_scores=domain_scores,   # ← 추가
-
+            domain_scores=domain_scores,
         )
     except Exception as error:
         raise HTTPException(
